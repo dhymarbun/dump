@@ -1,0 +1,100 @@
+import cv2
+import numpy as np
+import mediapipe as mp
+
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
+canvas = None
+last_x, last_y = None, None
+current_color = (255, 0, 0)
+
+colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 255, 255)]
+color_names = ['Blue', 'Green', 'Red', 'Yellow']
+clear_button_position = (400, 500)  # Clear button area start and end positions
+
+def is_finger_extended(hand_landmarks, finger_tip, finger_dip):
+    return hand_landmarks[finger_tip].y < hand_landmarks[finger_dip].y
+
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7,
+)
+
+cap = cv2.VideoCapture(0)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+
+    if canvas is None:
+        canvas = np.zeros_like(frame)
+
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    results = hands.process(rgb_frame)
+
+    for i, color in enumerate(colors):
+        cv2.rectangle(frame, (i * 100, 0), ((i + 1) * 100, 50), color, -1)
+        cv2.putText(frame, color_names[i], (i * 100 + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    cv2.rectangle(frame, (clear_button_position[0], 0), (clear_button_position[1], 50), (50, 50, 50), -1)
+    cv2.putText(frame, "Clear", (clear_button_position[0] + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(
+                frame,
+                hand_landmarks,
+                mp_hands.HAND_CONNECTIONS,
+            )
+
+            landmarks = hand_landmarks.landmark
+            h, w, c = frame.shape
+
+            index_tip = mp_hands.HandLandmark.INDEX_FINGER_TIP
+            index_dip = mp_hands.HandLandmark.INDEX_FINGER_DIP
+            x, y = int(landmarks[index_tip].x * w), int(landmarks[index_tip].y * h)
+
+            index_extended = is_finger_extended(landmarks, index_tip, index_dip)
+
+            all_fingers_closed = all(
+                not is_finger_extended(landmarks, tip, dip)
+                for tip, dip in [
+                    (mp_hands.HandLandmark.THUMB_TIP, mp_hands.HandLandmark.THUMB_IP),
+                    (mp_hands.HandLandmark.INDEX_FINGER_TIP, mp_hands.HandLandmark.INDEX_FINGER_DIP),
+                    (mp_hands.HandLandmark.MIDDLE_FINGER_TIP, mp_hands.HandLandmark.MIDDLE_FINGER_DIP),
+                    (mp_hands.HandLandmark.RING_FINGER_TIP, mp_hands.HandLandmark.RING_FINGER_DIP),
+                    (mp_hands.HandLandmark.PINKY_TIP, mp_hands.HandLandmark.PINKY_DIP),
+                ]
+            )
+
+            if y < 50:
+                if x >= clear_button_position[0] and x <= clear_button_position[1]:
+                    canvas = np.zeros_like(frame)
+                else:
+                    selected_color_index = x // 100
+                    if 0 <= selected_color_index < len(colors):
+                        current_color = colors[selected_color_index]
+
+            if index_extended and not all_fingers_closed:
+                if last_x is not None and last_y is not None:
+                    cv2.line(canvas, (last_x, last_y), (x, y), current_color, thickness=5)
+                last_x, last_y = x, y
+            else:
+                last_x, last_y = None, None
+
+    combined = cv2.addWeighted(frame, 0.7, canvas, 0.3, 0)
+
+    cv2.imshow("the fuck am i doing", combined)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
